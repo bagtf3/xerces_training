@@ -12,7 +12,7 @@ This repo is distributed under the **GNU General Public License v3.0**
 The following file(s) are copied or adapted from other projects:
 `lczero-training` and remain under GPL-3.0:
 
-- `chunkparser.py`  (adapted from LCZero)
+- `xerces_training/chunkparser.py`  (adapted from LCZero)
 
 ## Quick usage
 Smoke-test the parser on the included sample chunk (doesnt work yet):

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 #
 #    This file is part of Leela Chess.
 #    Copyright (C) 2018 Folkert Huizinga
@@ -16,6 +15,23 @@
 #
 #    You should have received a copy of the GNU General Public License
 #    along with Leela Chess.  If not, see <http://www.gnu.org/licenses/>.
+
+# ---------------------------------------------------------------------------
+# Local attribution / vendoring note
+# ---------------------------------------------------------------------------
+# Portions Copyright (c) Leela Chess Zero contributors
+# (original header above retained)
+#
+# This file has been copied/adapted from:
+# https://github.com/LeelaChessZero/lczero-training/blob/master/tf/chunkparser.py
+# Modified by: Bryan Goggin, 2026.
+#
+# Distributed under the terms of the GNU General Public License v3.0.
+# See the LICENSE file at the root of this repository for the full text.
+# SPDX-License-Identifier: GPL-3.0-only
+# ---------------------------------------------------------------------------
+
+
 """
 General comments on how chunkparser works.
 
