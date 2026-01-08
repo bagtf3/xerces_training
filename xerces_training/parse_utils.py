@@ -65,6 +65,7 @@ def moves_to_xerces_indices(ucis, stm_white=True):
     return out
 
 def planes_to_tokens(planes, stm, us_oo, us_ooo, them_oo, them_ooo):
+    base = 6
     BASE = 9
     KING_NO_CASTLE = 6
     KING_KS_ONLY = 7
@@ -74,83 +75,43 @@ def planes_to_tokens(planes, stm, us_oo, us_ooo, them_oo, them_ooo):
     p = np.asarray(planes)
     if p.shape != (112, 8, 8):
         raise ValueError("expected planes shape (112, 8, 8)")
-
-    stm_is_white = bool(int(stm) == 1)
-
-    def king_type(ks, qs):
-        if ks and qs:
-            return KING_BOTH
-        if ks:
-            return KING_KS_ONLY
-        if qs:
-            return KING_QS_ONLY
-        return KING_NO_CASTLE
-
-    # compute wht_king and blk_king in STM-as-white semantics
-    if stm_is_white:
-        wht_king = king_type(us_oo, us_ooo)
-        blk_king = king_type(them_oo, them_ooo)
+    
+    if us_oo & us_ooo:
+        us_king = KING_BOTH
+    elif us_oo:
+        us_king = KING_KS_ONLY
+    elif us_ooo:
+        us_king = KING_QS_ONLY
     else:
-        wht_king = king_type(them_oo, them_ooo)
-        blk_king = king_type(us_oo, us_ooo)
+        us_king = KING_NO_CASTLE
 
-    out = np.zeros(64, dtype=np.int16)
+    if them_oo & them_ooo:
+        them_king = BASE + KING_BOTH
+    elif them_oo:
+        them_king = BASE + KING_KS_ONLY
+    elif them_ooo:
+        them_king = BASE + KING_QS_ONLY
+    else:
+        them_king = BASE + KING_NO_CASTLE
+    
+    plane_to_token = {
+        0:1, 1:2, 2:3, 3:4, 4:5,
+        6:10, 7:11, 8:12, 9:13, 10:14
+    }
 
-    base = 0  # most recent block at planes[0..11]
-    # piece order in planes: 0..5 = stm pieces P N B R Q K
-    #                       6..11 = other-side P N B R Q K
-    for rank in range(8):
-        for file in range(8):
-            sq = rank * 8 + file
-            token = 0
-            placed = False
-
-            # same-as-stm pieces (planes 0..5)
-            for i in range(6):
-                if float(p[base + i, rank, file]) > 0.5:
-                    # non-king pieces: 1..6
-                    if i != 5:
-                        token = i + 1
+    out = np.zeros(64, dtype=np.int64)
+    for r in range(8):
+        for f in range(8):
+            idx = r*8 + f
+            for i in range(12):
+                if p[i, r, f] > 0.5:
+                    if i == 5:
+                        out[idx] = us_king
+                    elif i == 11:
+                        out[idx] = them_king
                     else:
-                        # king: choose STM/OPP king-type later via base
-                        token = i + 1  # placeholder; will adjust below
-                    placed = True
-                    same_as_stm = True
-                    piece_index = i
-                    break
-
-            if not placed:
-                # opponent pieces (planes 6..11)
-                for i in range(6):
-                    if float(p[base + 6 + i, rank, file]) > 0.5:
-                        if i != 5:
-                            token = BASE + (i + 1)
-                        else:
-                            token = BASE + (i + 1)
-                        placed = True
-                        same_as_stm = False
-                        piece_index = i
+                        out[idx] = plane_to_token[i]
                         break
-
-            if not placed:
-                continue
-
-            # correct king tokens (special encoding)
-            if piece_index == 5:  # king
-                if same_as_stm:
-                    # same-as-stm king uses wht_king when STM is white semantics
-                    token = wht_king if same_as_stm else blk_king
-                    # token currently is king_val; if piece is opponent we prefix BASE
-                    if not same_as_stm:
-                        token = BASE + token
-                else:
-                    # opponent king: use blk_king in STM-as-white semantics
-                    token = BASE + blk_king if not same_as_stm else blk_king
-
-            # ensure STM perspective: flip index if STM is black
-            write_idx = sq if stm_is_white else (sq ^ 56)
-            out[write_idx] = int(token)
-
     return out
 
 
@@ -166,56 +127,48 @@ def get_policy_vector(probs, stm, us_ooo, us_oo):
     idxs = np.nonzero(mask)[0]        
     
     moves = [idx_to_uci[idx] for idx in idxs]
-    xerces_indices = moves_to_xerces_indices(moves, stm_white=stm)
+    xerces_indices = moves_to_xerces_indices(moves, stm_white=(stm==0))
     xerces_policy = np.zeros(64 * 67, dtype=np.float32)
     for xi, idx in zip(xerces_indices, idxs):
         xerces_policy[xi] = probs[idx]
 
-    return xerces_policy, 1*mask
+    mask = 1*(xerces_policy > 0)
+    return xerces_policy, mask
 
 
-def planes_to_fen(planes, stm, us_oo, us_ooo, them_oo, them_ooo):
-    """
-    planes: numpy array shape (112,8,8) - LC0/Xerces bitplanes
-    stm: 1 if side-to-move is white, else 0
-    us_oo/us_ooo/them_oo/them_ooo: castling booleans for side-to-move (us)
-      and opponent (them). 'oo' = kingside, 'ooo' = queenside.
-    returns: FEN string
-    """
+def planes_to_fen(planes, stm_white, us_oo, us_ooo, them_oo, them_ooo):
+
     p = np.asarray(planes)
-    if p.ndim != 3 or p.shape[1:] != (8, 8):
-        raise ValueError("expected planes shape (112,8,8)")
 
-    base = 0  # most recent block is at planes[0..12)
-    # plane order base+0..5 = side-to-move pieces P N B R Q K
-    # base+6..11 = opponent pieces P N B R Q K
-    # If stm==1 the "side-to-move" planes are white pieces else they are black.
-    if int(stm) == 1:
-        ours_chars = ['P', 'N', 'B', 'R', 'Q', 'K']
-        theirs_chars = ['p', 'n', 'b', 'r', 'q', 'k']
+    white_chars = ['P', 'N', 'B', 'R', 'Q', 'K']
+    black_chars = ['p', 'n', 'b', 'r', 'q', 'k']
+    ranks = [r for r in range(8)]
+
+    if stm_white:
+        chars = white_chars + black_chars    
+        white_oo = us_oo
+        white_ooo = us_ooo
+        black_oo = them_oo
+        black_ooo = them_ooo
+
     else:
-        ours_chars = ['p', 'n', 'b', 'r', 'q', 'k']
-        theirs_chars = ['P', 'N', 'B', 'R', 'Q', 'K']
-
-    # build 8x8 board array (rank1..8 -> row 0..7, file a..h -> col 0..7)
+        # flip the ranks if black to move
+        ranks = ranks[::-1]
+        chars = black_chars + white_chars
+        white_oo = them_oo
+        white_ooo = them_ooo
+        black_oo = us_oo
+        black_ooo = us_ooo
+    
     board = [['' for _ in range(8)] for _ in range(8)]
-    # iterate squares; choose first plane >0.5 if multiple set
     for r in range(8):
         for f in range(8):
-            placed = False
-            for i in range(6):
-                if float(p[base + i, r, f]) > 0.5:
-                    board[r][f] = ours_chars[i]
-                    placed = True
-                    break
-            if placed:
-                continue
-            for i in range(6):
-                if float(p[base + 6 + i, r, f]) > 0.5:
-                    board[r][f] = theirs_chars[i]
+            for i in range(12):
+                if p[i, r, f] > 0.5:
+                    board[ranks[r]][f] = chars[i]
                     break
 
-    # build FEN ranks from rank8->rank1 (board row 7 -> row 0)
+    # build placement string rank8 -> rank1
     fen_rows = []
     for row in board[::-1]:
         empty = 0
@@ -233,37 +186,26 @@ def planes_to_fen(planes, stm, us_oo, us_ooo, them_oo, them_ooo):
         fen_rows.append(''.join(parts))
     placement = '/'.join(fen_rows)
 
-    # castling mapping: if stm==1, us==white else us==black
     castling = ''
-    if int(stm) == 1:
-        if us_oo:
-            castling += 'K'
-        if us_ooo:
-            castling += 'Q'
-        if them_oo:
-            castling += 'k'
-        if them_ooo:
-            castling += 'q'
-    else:
-        if us_oo:
-            castling += 'k'
-        if us_ooo:
-            castling += 'q'
-        if them_oo:
-            castling += 'K'
-        if them_ooo:
-            castling += 'Q'
+    if white_oo:
+        castling += 'K'
+    if white_ooo:
+        castling += 'Q'
+    if black_oo:
+        castling += 'k'
+    if black_ooo:
+        castling += 'q'
     if castling == '':
         castling = '-'
 
-    stm_char = 'w' if int(stm) == 1 else 'b'
-    ep = '-'  # no ep info provided
+    stm_char = 'w' if stm_white else 'b'
+    ep = '-'         # no en-passant info present in input_format=1
     return f"{placement} {stm_char} {castling} {ep} 0 1"
 
 
 def to_xerces_tuple(planes, probs, winner, best_q, extra_info):
-    stm, us_oo, us_ooo, them_oo, them_ooo = extra_info
-    stm_is_white = not stm
+    stm, us_oo, us_ooo, them_oo, them_ooo, inv = extra_info
+    stm_is_white = stm == 0
     
     planes = np.reshape(np.frombuffer(planes, dtype=np.float32), (112, 8, 8))
     tokens = planes_to_tokens(planes, stm_is_white, us_oo, us_ooo, them_oo, them_ooo)
@@ -272,7 +214,6 @@ def to_xerces_tuple(planes, probs, winner, best_q, extra_info):
     policy, mask = get_policy_vector(probs, stm, us_oo, us_ooo)
     
     winner = np.frombuffer(winner, dtype=np.float32)
-    
     Z = np.dot(winner, np.array([1, 0, -1]))
     best_q = np.frombuffer(best_q, dtype=np.float32)
     q = best_q[0] - best_q[2]

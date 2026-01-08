@@ -344,7 +344,9 @@ class ChunkParserInner:
             float32 best_m (4 bytes)
             float32 plies_left (4 bytes)
         """
-        
+        if (ver != V6_VERSION) or (input_format != 1):
+            import pdb; pdb.set_trace()
+        #import pdb; pdb.set_trace()
         # v3/4 data sometimes has a useful value in dep_ply_count (now invariance_info),
         # so copy that over if the new ply_count is not populated.
         if plies_left == 0:
@@ -418,12 +420,20 @@ class ChunkParserInner:
         best_q_l = 0.5 * (1.0 - best_d - best_q)
         assert -1.0 <= best_q <= 1.0 and 0.0 <= best_d <= 1.0
         best_q = struct.pack('fff', best_q_w, best_d, best_q_l)
-        extra_info = bool(stm), bool(us_oo), bool(us_ooo), bool(them_oo), bool(them_ooo)
+        
+        # normalize castling flags to booleans (caller expects booleans/int flags)
+        stm_val = bool(stm)
+        us_oo = bool(us_oo)
+        us_ooo = bool(us_ooo)
+        them_oo = bool(them_oo)
+        them_ooo = bool(them_ooo)
+
+        extra_info = (stm_val, us_oo, us_ooo, them_oo, them_ooo, invariance_info)
         tokens, mask, policy, y, fen = to_xerces_tuple(
             planes, probs, winner, best_q, extra_info
         )
 
-        return (tokens, mask, policy, y, fen)
+        return (tokens, mask, policy, y, fen, extra_info)
 
     def sample_record(self, chunkdata):
         """
@@ -580,8 +590,9 @@ class ChunkParserInner:
             policies_batch = np.stack([np.asarray(x[2]) for x in s])
             ys_batch = np.array([x[3] for x in s], dtype=np.float32)
             fens = [x[4] for x in s]
+            infos = [x[5] for x in s]
 
-            yield tokens_batch, masks_batch, policies_batch, ys_batch, fens
+            yield tokens_batch, masks_batch, policies_batch, ys_batch, fens, infos
 
     def parse(self):
         """
