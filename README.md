@@ -11,6 +11,7 @@ The following file(s) are copied or adapted from other projects:
 
 - `xerces_training/chunkparser.py`     (adapted from lczero-training)
 - `xerces_training/shufflerbuffer.py`  (adapted from lczero-training)
+- `xerces_training/uci_to_idx.py`      (adapted from trevor-graffa/lczero_tools)
 
 ## Quick usage
 Smoke-test the parser on the included sample chunk (doesnt work yet):

@@ -78,7 +78,8 @@ import itertools
 import multiprocessing as mp
 import numpy as np
 import random
-import shufflebuffer as sb
+import xerces_training.shufflebuffer as sb
+from xerces_training.parse_utils import to_xerces_tuple
 import struct
 import unittest
 import gzip
@@ -314,6 +315,7 @@ class ChunkParserInner:
         """
         # unpack the V6 content from raw byte array, arbitrarily chose 4 2-byte values
         # for the 8 "reserved" bytes
+        
         (ver, input_format, probs, planes, us_ooo, us_oo, them_ooo, them_oo,
          stm, rule50_count, invariance_info, dep_result, root_q, best_q,
          root_d, best_d, root_m, best_m, plies_left, result_q, result_d,
@@ -342,13 +344,14 @@ class ChunkParserInner:
             float32 best_m (4 bytes)
             float32 plies_left (4 bytes)
         """
+        
         # v3/4 data sometimes has a useful value in dep_ply_count (now invariance_info),
         # so copy that over if the new ply_count is not populated.
         if plies_left == 0:
             plies_left = invariance_info
         plies_left = struct.pack('f', plies_left)
 
-        assert input_format == self.expected_input_format
+        #assert input_format == self.expected_input_format
 
         # Unpack bit planes and cast to 32 bit float
         planes = np.unpackbits(np.frombuffer(planes, dtype=np.uint8)).astype(
@@ -375,7 +378,7 @@ class ChunkParserInner:
                             self.flat_planes[0] + \
                             self.flat_planes[0] + \
                             self.flat_planes[stm]
-        elif input_format == 3 or input_format == 4 or input_format == 132 or input_format == 5 or input_format == 133:
+        elif input_format in [3, 4, 132, 5, 133]:
             # Each inner array has to be reversed as these fields are in opposite endian to the planes data.
             them_ooo_bytes = reverse_expand_bits(them_ooo)
             us_ooo_bytes = reverse_expand_bits(us_ooo)
@@ -415,8 +418,12 @@ class ChunkParserInner:
         best_q_l = 0.5 * (1.0 - best_d - best_q)
         assert -1.0 <= best_q <= 1.0 and 0.0 <= best_d <= 1.0
         best_q = struct.pack('fff', best_q_w, best_d, best_q_l)
+        extra_info = bool(stm), bool(us_oo), bool(us_ooo), bool(them_oo), bool(them_ooo)
+        tokens, mask, policy, y, fen = to_xerces_tuple(
+            planes, probs, winner, best_q, extra_info
+        )
 
-        return (planes, probs, winner, best_q, plies_left)
+        return (tokens, mask, policy, y, fen)
 
     def sample_record(self, chunkdata):
         """
@@ -559,17 +566,22 @@ class ChunkParserInner:
 
     def batch_gen(self, gen, allow_partial=True):
         """
-        Pack multiple records into a single batch
+        Pack multiple records from `gen` into a single batch.
+        Expects each record to be: (tokens, mask, policy, y, fen).
+        Yields: (tokens_batch, masks_batch, policies_batch, ys_batch, fens_list)
         """
-        # Get N records. We flatten the returned generator to
-        # a list because we need to reuse it.
         while True:
             s = list(itertools.islice(gen, self.batch_size))
             if not len(s) or (not allow_partial and len(s) != self.batch_size):
                 return
-            yield (b''.join([x[0] for x in s]), b''.join([x[1] for x in s]),
-                   b''.join([x[2] for x in s]), b''.join([x[3] for x in s]),
-                   b''.join([x[4] for x in s]))
+
+            tokens_batch = np.stack([np.asarray(x[0]) for x in s])
+            masks_batch = np.stack([np.asarray(x[1]) for x in s])
+            policies_batch = np.stack([np.asarray(x[2]) for x in s])
+            ys_batch = np.array([x[3] for x in s], dtype=np.float32)
+            fens = [x[4] for x in s]
+
+            yield tokens_batch, masks_batch, policies_batch, ys_batch, fens
 
     def parse(self):
         """

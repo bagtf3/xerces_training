@@ -23,7 +23,7 @@
 # (original header above retained)
 #
 # This file has been copied/adapted from:
-# https://github.com/LeelaChessZero/lczero-training/blob/master/tf/chunkparser.py
+# https://github.com/LeelaChessZero/lczero-training/blob/master/tf/shufflebuffer.py
 # Modified by: Bryan Goggin, 2026.
 #
 # Distributed under the terms of the GNU General Public License v3.0.
