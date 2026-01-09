@@ -574,9 +574,6 @@ class ChunkParserInner:
             s = sbuff.extract()
             if s is None:
                 return
-            if s[0:4] != V6_VERSION and s[4:8] == CLASSICAL_INPUT:
-                print("skipping classical input record while draining buffer")
-                continue
             yield s
 
     def tuple_gen(self, gen):

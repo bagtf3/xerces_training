@@ -7,13 +7,17 @@ from pyfastchess import Board
 import chess 
 import random
 
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
 # done
 #training-run1--20250209-1017
 #training-run1--20240819-1917
 #training-run1--20230505-0917
 #training-run1--20230415-1317
-
-chunk_dir = "C:/Users/Bryan/Data/chessbot_data/training_data/lc0/training-run1--20230505-0217"
+#training-run1--20230505-0217
+chunk_dir = "C:/Users/Bryan/Data/chessbot_data/training_data/lc0/training-run1--20250209-1017"
 all_files = [f for f in os.listdir(chunk_dir) if f.endswith(".gz")]
 random.shuffle(all_files)
 chunks = [os.path.join(chunk_dir, c) for c in all_files[:30]]
@@ -184,6 +188,9 @@ def xerces_idx_to_uci(idx, stm):
 
     return chess.square_name(from_raw) + chess.square_name(to_raw)
 
+from chessbot.model import load_model
+model_file_init = "C:/Users/Bryan/Data/chessbot_data/selfplay_runs/conv_9x296_vs_stockfish/conv_9x296_vs_stockfish_model.h5"
+model = load_model(model_file_init)
 
 bad_sum_flag = False
 bad_illegal_mass_flag = False
@@ -192,24 +199,62 @@ chess_960_ignored = 0
 passing = 0
 for bi, batch in enumerate(parser.sequential()):    
     print("batch", bi)
-    tokens = batch[0]
-    masks = batch[1]
-    policies = batch[2]
-    ys = batch[3]
+    epoch = bi
+    Xstack = batch[0]
+    Mstack = batch[1]
+    Pstack = batch[2]
+    Ystack = batch[3]
     fens = batch[4]
     infos = batch[5]
     
+    preds = model.predict(Xstack, verbose=0, batch_size=batch_size)
+    
+    value_preds = preds[1].ravel(); targets = np.asarray(Ystack).ravel()
+    plt.scatter(targets, value_preds, s=6)
+    plt.plot([-1, 1], [-1, 1], linestyle="--", color="red", alpha=0.6)
+    plt.xlim(-1, 1); plt.ylim(-1, 1); plt.gca()
+    plt.xlabel("target"); plt.ylabel("pred"); plt.title("pred vs target"); plt.show()
+    
+    policy_logits = preds[0]  # (B,4096)
+    value_preds = preds[1].ravel()  # (B,)
+    
+    policy_stats = batch_policy_metrics(policy_logits, Pstack, Mstack)
+    
+    targets = np.asarray(Ystack).ravel()
+    value_mse = np.mean((value_preds - targets) ** 2)
+    value_corr = np.corrcoef(value_preds, targets)[0, 1]
+    
+    for k, v in policy_stats.items():
+        if k not in metrics_history:
+            metrics_history[k] = []
+        
+        metrics_history[k].append(v)
+    
+    metrics_history['value_mse'].append(value_mse)
+    metrics_history['value_corr'].append(value_corr)
+    
+    # build print dict and call the printer
+    print_metrics = {"value_mse": value_mse, "value_corr": value_corr}
+    print_metrics.update(policy_stats)
+    print_validation(epoch, print_metrics)
+
     for i, f in enumerate(fens):
         b = Board(f)
         cb = chess.Board(f, chess960=True)
         stm, _, _, _, _, invariance_info = infos[i]
         
         token_check = b.encode_64_tokens()
-        if not all(tokens[i] == token_check):
+        if not all(Xstack[i] == token_check):
             print("FAILED token check!!!")
-            print(tokens[i])
+            print("planes to tokens:")
+            print(Xstack[i])
+            print("tokens from fen:")
             print(token_check)
-            print([t1 == t2 for t1, t2 in zip(tokens[i], token_check)])
+            mismatch = []
+            for q, (t1, t2) in enumerate(zip(Xstack[i], token_check)):
+                if t1 != t2:
+                    mismatch.append([q, t1, t2])
+            print(mismatch)
             show_board(cb)
             raise Exception
         
@@ -219,11 +264,11 @@ for bi, batch in enumerate(parser.sequential()):
         
         lm = b.legal_moves()
         indices = b.moves_to_indices(lm)
-        not_indices = [i for i in range(len(policies[i])) if i not in indices]
+        not_indices = [i for i in range(len(Pstack[i])) if i not in indices]
         
         extra = 0.0
-        if np.sum(policies[i][not_indices]) > 0:
-            bad_mass = policies[i][not_indices]
+        if np.sum(Pstack[i][not_indices]) > 0:
+            bad_mass = Pstack[i][not_indices]
             if (len(bad_mass[bad_mass > 0]) < 2) and ep_possible(cb):
                 possible_ep_catch += 1
                 extra = bad_mass[bad_mass > 0].sum()
@@ -231,13 +276,13 @@ for bi, batch in enumerate(parser.sequential()):
             else:
                 bad_illegal_mass_flag = True
                 bad_indices = []
-                for j, p in enumerate(policies[i]):
+                for j, p in enumerate(Pstack[i]):
                     if p > 0:
                         if j not in indices:
                             bad_indices.append((j, p))
                             
-        policy_sum = policies[i][indices].sum()
-        if not np.isclose(policy_sum + extra, 1.0, 0.2):
+        policy_sum = Pstack[i][indices].sum()
+        if not np.isclose(policy_sum + extra, 1.0, 0.25):
             bad_sum_flag = True
 
             

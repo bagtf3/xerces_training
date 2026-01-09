@@ -100,7 +100,7 @@ def ep_from_history_planes(planes):
     return sorted(candidates)
 
 
-def planes_to_tokens(planes, stm, us_oo, us_ooo, them_oo, them_ooo):
+def planes_to_tokens(planes, us_oo, us_ooo, them_oo, them_ooo):
     BASE = 9
     KING_NO_CASTLE = 6
     KING_KS_ONLY = 7
@@ -255,7 +255,7 @@ def to_xerces_tuple(planes, probs, winner, best_q, extra_info):
     stm_is_white = stm == 0
     
     planes = np.reshape(np.frombuffer(planes, dtype=np.float32), (112, 8, 8))
-    tokens = planes_to_tokens(planes, stm_is_white, us_oo, us_ooo, them_oo, them_ooo)
+    tokens = planes_to_tokens(planes, us_oo, us_ooo, them_oo, them_ooo)
     
     probs = np.frombuffer(probs, dtype=np.float32)
     policy, mask = get_policy_vector(probs, stm, us_oo, us_ooo)
