@@ -260,6 +260,7 @@ class ChunkParserInner:
         self.batches_yielded = 0
         self.records_yielded = 0
         self.files_read = 0
+        self.raw_records_seen = 0
 
     def init_structs(self):
         """
@@ -499,7 +500,6 @@ class ChunkParserInner:
 
     def single_file_gen(self, filename):
         try:
-            self.files_read += 1
             with gzip.open(filename, "rb") as chunk_file:
                 version = chunk_file.read(4)
                 chunk_file.seek(0)
@@ -594,6 +594,7 @@ class ChunkParserInner:
         applying a random symmetry on the way.
         """
         for r in gen:
+            self.files_read += 1
             yield self.convert_v6_to_tuple(r)
 
     def batch_gen(self, gen, allow_partial=True):

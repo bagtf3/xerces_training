@@ -441,6 +441,8 @@ if __name__ == "__main__":
 
     # load base config and validation configs
     cfg = load_training_config(yaml_path)
+    cfg['run_dir'] = run_dir
+    cfg['run_tag'] = run_tag
     
     # check for the model
     model_file = run_tag + "_model.h5"
