@@ -12,11 +12,12 @@ import random
 #training-run1--20240819-1917
 #training-run1--20230505-0917
 #training-run1--20230415-1317
-chunk_dir = "C:/Users/Bryan/Data/chessbot_data/training_data/lc0/"
+
+chunk_dir = "C:/Users/Bryan/Data/chessbot_data/training_data/lc0/training-run1--20230505-0217"
 all_files = [f for f in os.listdir(chunk_dir) if f.endswith(".gz")]
 random.shuffle(all_files)
-chunks = [os.path.join(chunk_dir, c) for c in all_files[:20]]
-batch_size = 32
+chunks = [os.path.join(chunk_dir, c) for c in all_files[:30]]
+batch_size = 512
 # Make a parser that does NOT spawn worker processes or the chunk_reader
 parser = ChunkParser(
     chunks,
@@ -188,6 +189,7 @@ bad_sum_flag = False
 bad_illegal_mass_flag = False
 possible_ep_catch = 0
 chess_960_ignored = 0
+passing = 0
 for bi, batch in enumerate(parser.sequential()):    
     print("batch", bi)
     tokens = batch[0]
@@ -250,9 +252,11 @@ for bi, batch in enumerate(parser.sequential()):
         else:
             bad_sum_flag = False
             bad_illegal_mass_flag = False
+            passing += 1
             
 print("possible eps allowed to pass", possible_ep_catch)
 print("chess 960s ignored", chess_960_ignored)
+print(passing, "passing records")
 
 
 leela_dir = "C:/Users/Bryan/Data/chessbot_data/training_data/lc0/"
@@ -261,5 +265,7 @@ all_files = 0
 for sd in sub_dirs:
     d = os.path.join(leela_dir, sd)
     all_files += len([f for f in os.listdir(d) if f.endswith(".gz")])
+    
+print(all_files, f"training games found across {len(sub_dirs)} folders")
 
 
