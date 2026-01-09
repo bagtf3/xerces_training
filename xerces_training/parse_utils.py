@@ -266,5 +266,5 @@ def to_xerces_tuple(planes, probs, winner, best_q, extra_info):
     q = best_q[0] - best_q[2]
     y = 0.5 * Z + 0.5 * q
 
-    fen = planes_to_fen(planes, stm_is_white, us_oo, us_ooo, them_oo, them_ooo)
-    return tokens, mask, policy, y, fen
+    #fen = planes_to_fen(planes, stm_is_white, us_oo, us_ooo, them_oo, them_ooo)
+    return tokens, mask, policy, y#, fen

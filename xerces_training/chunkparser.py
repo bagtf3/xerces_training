@@ -83,7 +83,7 @@ from xerces_training.parse_utils import to_xerces_tuple
 import struct
 import unittest
 import gzip
-from select import select
+import time
 
 V6_VERSION = struct.pack('i', 6)
 V5_VERSION = struct.pack('i', 5)
@@ -139,18 +139,16 @@ class ChunkParser:
 
     def __init__(self,
                  chunks,
-                 expected_input_format,
                  shuffle_size=1,
                  sample=1,
-                 buffer_size=1,
                  batch_size=256,
                  diff_focus_min=1,
                  diff_focus_slope=0,
                  diff_focus_q_weight=6.0,
                  diff_focus_pol_scale=3.5,
                  workers=None):
-        self.inner = ChunkParserInner(self, chunks, expected_input_format,
-                                      shuffle_size, sample, buffer_size,
+        self.inner = ChunkParserInner(self, chunks,
+                                      shuffle_size, sample,
                                       batch_size, diff_focus_min,
                                       diff_focus_slope, diff_focus_q_weight,
                                       diff_focus_pol_scale, workers)
@@ -172,11 +170,14 @@ class ChunkParser:
 
     def sequential(self):
         return self.inner.sequential()
-
+    
+    def report(self):
+        return self.inner.report()
+    
 
 class ChunkParserInner:
-    def __init__(self, parent, chunks, expected_input_format, shuffle_size,
-                 sample, buffer_size, batch_size, diff_focus_min,
+    def __init__(self, parent, chunks, shuffle_size,
+                 sample, batch_size, diff_focus_min,
                  diff_focus_slope, diff_focus_q_weight, diff_focus_pol_scale,
                  workers):
         """
@@ -202,8 +203,6 @@ class ChunkParserInner:
         TensorFlow doesn't have a fast way to unpack bit vectors. 7950 bytes
         long.
         """
-
-        self.expected_input_format = expected_input_format
 
         # Build 2 flat float32 planes with values 0,1
         self.flat_planes = []
@@ -253,6 +252,14 @@ class ChunkParserInner:
             self.chunks = chunks
 
         self.init_structs()
+
+        # minimal stats / timing
+        self.start_time = time.time()
+        self.recv_time = 0.0
+        self.sample_time = 0.0
+        self.batches_yielded = 0
+        self.records_yielded = 0
+        self.files_read = 0
 
     def init_structs(self):
         """
@@ -352,8 +359,6 @@ class ChunkParserInner:
             plies_left = invariance_info
         plies_left = struct.pack('f', plies_left)
 
-        #assert input_format == self.expected_input_format
-
         # Unpack bit planes and cast to 32 bit float
         planes = np.unpackbits(np.frombuffer(planes, dtype=np.uint8)).astype(
             np.float32)
@@ -428,11 +433,12 @@ class ChunkParserInner:
         them_ooo = bool(them_ooo)
 
         extra_info = (stm_val, us_oo, us_ooo, them_oo, them_ooo, invariance_info)
-        tokens, mask, policy, y, fen = to_xerces_tuple(
+        #tokens, mask, policy, y, fen = to_xerces_tuple(
+        tokens, mask, policy, y = to_xerces_tuple(
             planes, probs, winner, best_q, extra_info
         )
 
-        return (tokens, mask, policy, y, fen, extra_info)
+        return (tokens, mask, policy, y)#, fen, extra_info)
 
     def sample_record(self, chunkdata):
         """
@@ -493,7 +499,8 @@ class ChunkParserInner:
 
     def single_file_gen(self, filename):
         try:
-            with gzip.open(filename, 'rb') as chunk_file:
+            self.files_read += 1
+            with gzip.open(filename, "rb") as chunk_file:
                 version = chunk_file.read(4)
                 chunk_file.seek(0)
                 if version == V6_VERSION:
@@ -505,22 +512,20 @@ class ChunkParserInner:
                 elif version == V3_VERSION:
                     record_size = self.v3_struct.size
                 else:
-                    print('Unknown version {} in file {}'.format(
-                        version, filename))
+                    print("Unknown version {} in file {}".format(version,
+                                                               filename))
                     return
                 while True:
                     chunkdata = chunk_file.read(256 * record_size)
                     if len(chunkdata) == 0:
                         break
                     for item in self.sample_record(chunkdata):
-                        # If record is not v6 and input-format == classical (1),
-                        # skip it and keep pulling from the generator.
                         if item[0:4] != V6_VERSION and item[4:8] == CLASSICAL_INPUT:
-                            print('skipping classical input record in {}'.format(
+                            print("skipping classical input record in {}".format(
                                 filename))
                             continue
                         yield item
-    
+
         except:
             print("failed to parse {}".format(filename))
 
@@ -549,31 +554,38 @@ class ChunkParserInner:
 
     def v6_gen(self):
         """
-        Read v6 records from child workers, shuffle, and yield
-        records.
+        Read v6 records from child workers, shuffle, and yield records.
+        Instrument recv timing and count yielded records.
         """
         sbuff = sb.ShuffleBuffer(self.v6_struct.size, self.shuffle_size)
         while len(self.readers):
-            for r in self.readers:
+            for r in list(self.readers):
                 try:
+                    t0 = time.time()
                     s = r.recv_bytes()
+                    self.recv_time += time.time() - t0
                     s = sbuff.insert_or_replace(s)
                     if s is None:
-                        continue  # shuffle buffer not yet full
-                    # If record is not v6 and input-format == classical (1),
-                    # skip it and continue reading.
+                        continue
                     if s[0:4] != V6_VERSION and s[4:8] == CLASSICAL_INPUT:
                         print("skipping classical input record from worker")
                         continue
+                    self.records_yielded += 1
                     yield s
                 except EOFError:
                     print("Reader EOF")
-                    self.readers.remove(r)
+                    try:
+                        self.readers.remove(r)
+                    except ValueError:
+                        pass
         # drain the shuffle buffer.
         while True:
+            t0 = time.time()
             s = sbuff.extract()
+            self.recv_time += time.time() - t0
             if s is None:
                 return
+            self.records_yielded += 1
             yield s
 
     def tuple_gen(self, gen):
@@ -587,22 +599,24 @@ class ChunkParserInner:
     def batch_gen(self, gen, allow_partial=True):
         """
         Pack multiple records from `gen` into a single batch.
-        Expects each record to be: (tokens, mask, policy, y, fen).
-        Yields: (tokens_batch, masks_batch, policies_batch, ys_batch, fens_list)
+        Instrument batch timing and counts.
         """
         while True:
             s = list(itertools.islice(gen, self.batch_size))
             if not len(s) or (not allow_partial and len(s) != self.batch_size):
                 return
 
+            t0 = time.time()
             tokens_batch = np.stack([np.asarray(x[0]) for x in s])
             masks_batch = np.stack([np.asarray(x[1]) for x in s])
             policies_batch = np.stack([np.asarray(x[2]) for x in s])
             ys_batch = np.array([x[3] for x in s], dtype=np.float32)
-            fens = [x[4] for x in s]
-            infos = [x[5] for x in s]
 
-            yield tokens_batch, masks_batch, policies_batch, ys_batch, fens, infos
+            self.sample_time += time.time() - t0
+            self.batches_yielded += 1
+            self.records_yielded += len(s)
+
+            yield tokens_batch, masks_batch, policies_batch, ys_batch
 
     def parse(self):
         """
@@ -613,6 +627,39 @@ class ChunkParserInner:
         gen = self.batch_gen(gen)  # assemble into batches
         for b in gen:
             yield b
+
+    def report(self):
+        title = "   ChunkParser Stats   ".center(40, "#")
+        print(title)
+        total_up = time.time() - self.start_time
+        total_recv = self.recv_time
+        total_sample = self.sample_time
+        batches = self.batches_yielded
+        records = self.records_yielded
+        files = self.files_read
+        buf = self.shuffle_size
+
+        def fmt_time(s):
+            s = int(s)
+            h = s // 3600
+            m = (s % 3600) // 60
+            sec = s % 60
+            return f"{h:d}:{m:02d}:{sec:02d}"
+
+        rows = [
+            ("up time", fmt_time(total_up)),
+            ("recv time", f"{total_recv:.3f}s"),
+            ("sample time", f"{total_sample:.3f}s"),
+            ("batches yielded", f"{batches:,}"),
+            ("records yielded", f"{records:,}"),
+            ("files read (seq)", f"{files:,}"),
+            ("shuffle_size", f"{buf:,}"),
+        ]
+
+        max_label = max(len(r[0]) for r in rows)
+        max_val = max(len(r[1]) for r in rows)
+        for k, v in rows:
+            print(f"[chunk] {k.ljust(max_label)} : {v.rjust(max_val)}")
 
 
 # Tests to check that records parse correctly

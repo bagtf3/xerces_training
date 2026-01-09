@@ -28,7 +28,6 @@ parser = ChunkParser(
     expected_input_format=1,  # match how the chunks were written (1/2/3/etc)
     shuffle_size=1,
     sample=1,
-    buffer_size=1,
     batch_size=batch_size,
     workers=0,                # <= IMPORTANT: disables chunk_reader / workers
 )
