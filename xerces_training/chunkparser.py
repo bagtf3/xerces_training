@@ -322,6 +322,7 @@ class ChunkParserInner:
          played_q, played_d, played_m, orig_q, orig_d, orig_m, visits,
          played_idx, best_idx, reserved1, reserved2, reserved3,
          reserved4) = self.v6_struct.unpack(content)
+        
         """
         v5 struct format was (8308 bytes total)
             int32 version (4 bytes)
@@ -344,9 +345,7 @@ class ChunkParserInner:
             float32 best_m (4 bytes)
             float32 plies_left (4 bytes)
         """
-        if (ver != V6_VERSION) or (input_format != 1):
-            import pdb; pdb.set_trace()
-        #import pdb; pdb.set_trace()
+        
         # v3/4 data sometimes has a useful value in dep_ply_count (now invariance_info),
         # so copy that over if the new ply_count is not populated.
         if plies_left == 0:
@@ -514,8 +513,14 @@ class ChunkParserInner:
                     if len(chunkdata) == 0:
                         break
                     for item in self.sample_record(chunkdata):
+                        # If record is not v6 and input-format == classical (1),
+                        # skip it and keep pulling from the generator.
+                        if item[0:4] != V6_VERSION and item[4:8] == CLASSICAL_INPUT:
+                            print('skipping classical input record in {}'.format(
+                                filename))
+                            continue
                         yield item
-
+    
         except:
             print("failed to parse {}".format(filename))
 
@@ -555,6 +560,11 @@ class ChunkParserInner:
                     s = sbuff.insert_or_replace(s)
                     if s is None:
                         continue  # shuffle buffer not yet full
+                    # If record is not v6 and input-format == classical (1),
+                    # skip it and continue reading.
+                    if s[0:4] != V6_VERSION and s[4:8] == CLASSICAL_INPUT:
+                        print("skipping classical input record from worker")
+                        continue
                     yield s
                 except EOFError:
                     print("Reader EOF")
@@ -564,6 +574,9 @@ class ChunkParserInner:
             s = sbuff.extract()
             if s is None:
                 return
+            if s[0:4] != V6_VERSION and s[4:8] == CLASSICAL_INPUT:
+                print("skipping classical input record while draining buffer")
+                continue
             yield s
 
     def tuple_gen(self, gen):

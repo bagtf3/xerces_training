@@ -64,17 +64,51 @@ def moves_to_xerces_indices(ucis, stm_white=True):
         out.append(uci_to_xerces_index(u, stm_white))
     return out
 
+
+def ep_from_history_planes(planes):
+    p = np.asarray(planes)
+    our_curr = p[0]
+    their_curr = p[6]
+    their_prev = p[19]
+    candidates = set()
+    
+    # for EP, stm must have a pawn on the 5th rank
+    if our_curr[4].sum() == 0:
+        return []
+    
+    # opponent must also have a pawn on the 5th rank
+    if their_curr[4].sum() == 0:
+        return []
+    
+    # they also had to have a pawn on the 7th before
+    if their_prev[6].sum() == 0:
+        return []
+    
+    prev_occ = p[13:25].sum(axis=0)
+    curr_occ = p[0:11].sum(axis=0)
+    files = [f for f in range(8)]
+    for f in files:
+        # detect EP via their pawn moved 2 spaces last move
+        if (their_curr[4, f] == 1) and (their_prev[6, f] == 1) and (their_curr[6, f]==0):
+            # square must be empty now and last turn
+            if (prev_occ[5, f] == 0) and (curr_occ[5, f] == 0):
+                # check adjacent squares for our pawn
+                to_check = [af for af in [f-1, f+1] if af in files]
+                if our_curr[4, to_check].sum() >= 1:
+                    candidates.add(8*5 + f)
+    
+    return sorted(candidates)
+
+
 def planes_to_tokens(planes, stm, us_oo, us_ooo, them_oo, them_ooo):
-    base = 6
     BASE = 9
     KING_NO_CASTLE = 6
     KING_KS_ONLY = 7
     KING_QS_ONLY = 8
     KING_BOTH = 9
+    EP_POSSIBLE = 19
 
     p = np.asarray(planes)
-    if p.shape != (112, 8, 8):
-        raise ValueError("expected planes shape (112, 8, 8)")
     
     if us_oo & us_ooo:
         us_king = KING_BOTH
@@ -112,6 +146,15 @@ def planes_to_tokens(planes, stm, us_oo, us_ooo, them_oo, them_ooo):
                     else:
                         out[idx] = plane_to_token[i]
                         break
+
+    ep_candidates = ep_from_history_planes(planes)
+    if ep_candidates:
+        for ep_square in ep_candidates:
+            # should be 0
+            assert out[ep_square] == 0
+            # 19 indicates EP is possible for STM
+            out[ep_square] = EP_POSSIBLE
+
     return out
 
 
@@ -136,39 +179,33 @@ def get_policy_vector(probs, stm, us_ooo, us_oo):
     return xerces_policy, mask
 
 
-def planes_to_fen(planes, stm_white, us_oo, us_ooo, them_oo, them_ooo):
-
-    p = np.asarray(planes)
-
+def planes_to_fen(planes, stm_white, us_oo, us_ooo, them_oo, them_ooo, start_idx=0):
     white_chars = ['P', 'N', 'B', 'R', 'Q', 'K']
     black_chars = ['p', 'n', 'b', 'r', 'q', 'k']
     ranks = [r for r in range(8)]
 
     if stm_white:
-        chars = white_chars + black_chars    
+        chars = white_chars + black_chars
         white_oo = us_oo
         white_ooo = us_ooo
         black_oo = them_oo
         black_ooo = them_ooo
-
     else:
-        # flip the ranks if black to move
         ranks = ranks[::-1]
         chars = black_chars + white_chars
         white_oo = them_oo
         white_ooo = them_ooo
         black_oo = us_oo
         black_ooo = us_ooo
-    
+
     board = [['' for _ in range(8)] for _ in range(8)]
     for r in range(8):
         for f in range(8):
             for i in range(12):
-                if p[i, r, f] > 0.5:
+                if planes[start_idx + i, r, f] > 0.5:
                     board[ranks[r]][f] = chars[i]
                     break
-
-    # build placement string rank8 -> rank1
+    
     fen_rows = []
     for row in board[::-1]:
         empty = 0
@@ -199,7 +236,17 @@ def planes_to_fen(planes, stm_white, us_oo, us_ooo, them_oo, them_ooo):
         castling = '-'
 
     stm_char = 'w' if stm_white else 'b'
-    ep = '-'         # no en-passant info present in input_format=1
+    # ep check for current position only (use ep_from_history_planes)
+    ep = '-'
+    candidates = ep_from_history_planes(planes)
+    if candidates:
+        if not stm_white:
+            candidates = [flip_index(c) for c in candidates]
+        idx = candidates[0]
+        file = idx % 8
+        rank = idx // 8
+        ep = chr(ord('a') + file) + str(rank + 1)
+    
     return f"{placement} {stm_char} {castling} {ep} 0 1"
 
 
