@@ -216,11 +216,14 @@ def run_training(cfg):
     # start overall time and first epoch timer
     begin = time.time()
     epoch_start = time.time()
+
+    # if a restart, where to start from, else 0
+    epoch = cfg.get("starting_epoch", 0)
     for step, lc0_batch in enumerate(lc0_parser.parse()):
         if step % 17 == 0:
             lc0_parser.report()
             
-        epoch = step*cfg['major_batch_mult']
+        epoch += step*cfg['major_batch_mult']
         if epoch > n_epochs:
             break
 
@@ -250,7 +253,7 @@ def run_training(cfg):
 
         Xb, Mb, Pb, Yb = train_batch
         samples_seen += Xb.shape[0]
-
+        
         if step % validate_every == 0:
             # pred validate and train
             preds = model.predict(Xb, verbose=0, batch_size=batch_size)

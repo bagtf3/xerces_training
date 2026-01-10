@@ -431,11 +431,13 @@ class ChunkParserInner:
             winner = struct.pack('fff', dep_result == 1.0, dep_result == 0.0,
                                  dep_result == -1.0)
 
+        y_xerces = 0.5*best_q + 0.5*result_q
+
         best_q_w = 0.5 * (1.0 - best_d + best_q)
         best_q_l = 0.5 * (1.0 - best_d - best_q)
         assert -1.0 <= best_q <= 1.0 and 0.0 <= best_d <= 1.0
         best_q = struct.pack('fff', best_q_w, best_d, best_q_l)
-        
+
         # normalize castling flags to booleans (caller expects booleans/int flags)
         stm_val = bool(stm)
         us_oo = bool(us_oo)
@@ -444,11 +446,8 @@ class ChunkParserInner:
         them_ooo = bool(them_ooo)
 
         extra_info = (stm_val, us_oo, us_ooo, them_oo, them_ooo, invariance_info)
-        tokens, mask, policy, y = to_xerces_tuple(
-            planes, probs, winner, best_q, extra_info
-        )
-
-        return (tokens, mask, policy, y)
+        tokens, mask, policy = to_xerces_tuple(planes, probs, extra_info)
+        return (tokens, mask, policy, y_xerces)
 
     def sample_record(self, chunkdata):
         """
