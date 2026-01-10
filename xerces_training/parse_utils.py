@@ -252,7 +252,6 @@ def planes_to_fen(planes, stm_white, us_oo, us_ooo, them_oo, them_ooo, start_idx
 
 def to_xerces_tuple(planes, probs, winner, best_q, extra_info):
     stm, us_oo, us_ooo, them_oo, them_ooo, inv = extra_info
-    stm_is_white = stm == 0
     
     planes = np.reshape(np.frombuffer(planes, dtype=np.float32), (112, 8, 8))
     tokens = planes_to_tokens(planes, us_oo, us_ooo, them_oo, them_ooo)
@@ -266,5 +265,4 @@ def to_xerces_tuple(planes, probs, winner, best_q, extra_info):
     q = best_q[0] - best_q[2]
     y = 0.5 * Z + 0.5 * q
 
-    #fen = planes_to_fen(planes, stm_is_white, us_oo, us_ooo, them_oo, them_ooo)
-    return tokens, mask, policy, y#, fen
+    return tokens, mask, policy, y

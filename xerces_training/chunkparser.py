@@ -136,7 +136,6 @@ def chunk_reader(chunk_filenames, chunk_filename_queue):
 
 
 class ChunkParser:
-
     def __init__(self,
                  chunks,
                  shuffle_size=1,
@@ -146,12 +145,14 @@ class ChunkParser:
                  diff_focus_slope=0,
                  diff_focus_q_weight=6.0,
                  diff_focus_pol_scale=3.5,
+                 draw_drop_rate=0.25,
                  workers=None):
-        self.inner = ChunkParserInner(self, chunks,
-                                      shuffle_size, sample,
-                                      batch_size, diff_focus_min,
-                                      diff_focus_slope, diff_focus_q_weight,
-                                      diff_focus_pol_scale, workers)
+        
+        self.inner = ChunkParserInner(
+            self, chunks, shuffle_size, sample, batch_size, diff_focus_min,
+            diff_focus_slope, diff_focus_q_weight,
+            diff_focus_pol_scale, draw_drop_rate, workers
+        )
 
     def shutdown(self):
         """
@@ -179,7 +180,7 @@ class ChunkParserInner:
     def __init__(self, parent, chunks, shuffle_size,
                 sample, batch_size, diff_focus_min,
                 diff_focus_slope, diff_focus_q_weight, diff_focus_pol_scale,
-                workers):
+                draw_drop_rate, workers):
         
         # build constant planes
         self.flat_planes = []
@@ -192,6 +193,7 @@ class ChunkParserInner:
         self.diff_focus_slope = diff_focus_slope
         self.diff_focus_q_weight = diff_focus_q_weight
         self.diff_focus_pol_scale = diff_focus_pol_scale
+        self.draw_drop_rate = draw_drop_rate
         self.batch_size = batch_size
         self.shuffle_size = shuffle_size
 
@@ -206,11 +208,13 @@ class ChunkParserInner:
             self.chunk_filename_queue = mp.Queue(maxsize=4096)
             for _ in range(workers):
                 read, write = mp.Pipe(duplex=False)
-                p = mp.Process(target=self.task,
-                            args=(self.chunk_filename_queue, write))
+                p = mp.Process(
+                    target=self.task, args=(self.chunk_filename_queue, write))
+                
                 p.daemon = True
                 parent.processes.append(p)
                 p.start()
+
                 self.readers.append(read)
                 self.writers.append(write)
 
@@ -385,8 +389,12 @@ class ChunkParserInner:
         assert len(planes) == ((8 * 13 * 1 + 8 * 1 * 1) * 8 * 8 * 4)
 
         if ver == V6_VERSION:
-            winner = struct.pack('fff', 0.5 * (1.0 - result_d + result_q),
-                                 result_d, 0.5 * (1.0 - result_d - result_q))
+            winner = struct.pack(
+                'fff',
+                0.5 * (1.0 - result_d + result_q),
+                result_d,
+                0.5 * (1.0 - result_d - result_q)
+            )
         else:
             dep_result = float(dep_result)
             assert dep_result == 1.0 or dep_result == -1.0 or dep_result == 0.0
@@ -406,12 +414,11 @@ class ChunkParserInner:
         them_ooo = bool(them_ooo)
 
         extra_info = (stm_val, us_oo, us_ooo, them_oo, them_ooo, invariance_info)
-        #tokens, mask, policy, y, fen = to_xerces_tuple(
         tokens, mask, policy, y = to_xerces_tuple(
             planes, probs, winner, best_q, extra_info
         )
 
-        return (tokens, mask, policy, y)#, fen, extra_info)
+        return (tokens, mask, policy, y)
 
     def sample_record(self, chunkdata):
         """
@@ -456,15 +463,20 @@ class ChunkParserInner:
                 best_q = struct.unpack('f', record[8284:8288])[0]
                 orig_q = struct.unpack('f', record[8328:8332])[0]
                 pol_kld = struct.unpack('f', record[8348:8352])[0]
+                result_d = struct.unpack('f', record[8312:8316])[0]
+                if result_d > 0.5 and self.draw_drop_rate > 0.0:
+                    if random.random() < self.draw_drop_rate:
+                        # drop this draw-ish record
+                        continue
 
                 # if orig_q is NaN or pol_kld is 0, accept, else accept based on diff focus
                 if not np.isnan(orig_q) and pol_kld > 0:
                     diff_q = abs(best_q - orig_q)
                     q_weight = self.diff_focus_q_weight
                     pol_scale = self.diff_focus_pol_scale
-                    total = (q_weight * diff_q + pol_kld) / (q_weight +
-                                                             pol_scale)
+                    total = (q_weight * diff_q + pol_kld) / (q_weight + pol_scale)
                     thresh_p = self.diff_focus_min + self.diff_focus_slope * total
+                    
                     if thresh_p < 1.0 and random.random() > thresh_p:
                         continue
 
@@ -602,12 +614,12 @@ class ChunkParserInner:
     def report(self):
         title = "   ChunkParser Stats   ".center(40, "#")
         print(title)
+
         total_up = time.time() - self.start_time
         total_recv = self.recv_time
         total_sample = self.sample_time
         batches = self.batches_yielded
         records = self.records_yielded
-
         buf = self.shuffle_size
 
         def fmt_time(s):
@@ -617,12 +629,22 @@ class ChunkParserInner:
             sec = s % 60
             return f"{h:d}:{m:02d}:{sec:02d}"
 
+        # overall throughput (records / second) since start_time
+        if total_sample > 0.0:
+            records_per_sec = records / total_sample
+            batches_per_sec = batches / total_sample
+        else:
+            records_per_sec = 0.0
+            batches_per_sec = 0.0
+
         rows = [
             ("up time", fmt_time(total_up)),
             ("recv time", f"{total_recv:.3f}s"),
             ("sample time", f"{total_sample:.3f}s"),
             ("batches yielded", f"{batches:,}"),
             ("records yielded", f"{records:,}"),
+            ("samples/sec", f"{records_per_sec:,.1f}"),
+            ("batches/sec", f"{batches_per_sec:,.2f}"),
             ("shuffle_size", f"{buf:,}"),
         ]
 
@@ -630,7 +652,6 @@ class ChunkParserInner:
         max_val = max(len(r[1]) for r in rows)
         for k, v in rows:
             print(f"[chunk] {k.ljust(max_label)} : {v.rjust(max_val)}")
-
 
 
 # Tests to check that records parse correctly

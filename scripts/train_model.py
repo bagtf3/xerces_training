@@ -25,15 +25,20 @@ def load_training_config(path):
     return cfg
 
 
-def get_loss_weights(weight_dict, epoch, current_loss_weights):
-    for k in sorted(weight_dict.keys()):
+def get_loss_weights(weight_dict, epoch, loss_weights):
+    if not weight_dict:
+        return loss_weights
+
+    sorted_keys = sorted(weight_dict.keys())
+    chosen = weight_dict[sorted_keys[-1]]
+    for k in sorted_keys:
         if epoch < k:
-            weight = weight_dict[k]
+            chosen = weight_dict[k]
             break
 
-    for k in current_loss_weights.keys():
-        current_loss_weights[k] = weight
-    return current_loss_weights
+    for out_name in loss_weights:
+        loss_weights[out_name] = chosen
+    return loss_weights
 
 
 def combine_batches(lc0_batch, selfplay_batch, shuffle=True):
@@ -138,14 +143,6 @@ def run_training(cfg):
     print(f"[lc0] {'TOTAL'.ljust(max_name)} : "
         f"{f'{len(chunks):,}'.rjust(count_w)} files")
 
-    parser = ChunkParser(chunks, workers=2, batch_size=64)
-    it = parser.parse()
-    for i, batch in enumerate(it):
-        if i >= 2:
-            break
-    parser.inner.report()
-    parser.shutdown()
-
     shuffle_size = max(batch_size*cfg['shuffle_size_bs_mult'], 20000)
     lc0_mix = cfg.get("lc0_to_selfplay_mix", 1.0)
     if lc0_mix == 1.0:
@@ -164,6 +161,7 @@ def run_training(cfg):
         diff_focus_slope=cfg.get("diff_focus_slope", 0.15),
         diff_focus_q_weight=cfg.get("diff_focus_q_weight", 3.0),
         diff_focus_pol_scale=cfg.get("diff_focus_pol_scale", 2.0),
+        draw_drop_rate=cfg.get("draw_drop_rate", 0.25)
     )
 
     json_parser = None
@@ -201,10 +199,8 @@ def run_training(cfg):
     
     # training run starts here
     metrics_history = {"value_mse": [], "value_corr": []}
+    samples_seen = 0
     epoch_time_list = []
-
-    eps = 1e-12
-    big_neg = -1e6
     
     progress_file = cfg['progress_file']
     if not os.path.exists(progress_file):
@@ -222,7 +218,7 @@ def run_training(cfg):
         if step % 17 == 0:
             lc0_parser.report()
             
-        epoch = step*10
+        epoch = step*cfg['major_batch_mult']
         if epoch > n_epochs:
             break
 
@@ -230,14 +226,14 @@ def run_training(cfg):
         
         # optionally mix in seflplay data
         if json_parser is not None:
-            if step % 15 == 0:
+            if step % 13 == 0:
                 json_parser.report()
             for attempt in range(2):
                 try:
                     selfplay_batch = json_parser.refill_and_sample(selfplay_batch_size)
                     break
                 except Exception as e:
-                    print(f"[train] json_parser error (attempt {attempt+1}): {e}")
+                    print(f"[training] json_parser error (attempt {attempt+1}): {e}")
                     json_parser.reset()
                     # re-raise on final attempt to surface the real error
                     if attempt == 1:
@@ -251,6 +247,8 @@ def run_training(cfg):
             continue
 
         Xb, Mb, Pb, Yb = train_batch
+        samples_seen += Xb.shape[0]
+
         if step % validate_every == 0:
             # pred validate and train
             preds = model.predict(Xb, verbose=0, batch_size=batch_size)
@@ -289,10 +287,7 @@ def run_training(cfg):
         
             # create eval_df row
             latest_row = pd.DataFrame(metrics_history).iloc[[-1], :]
-            n_samples = Xb.shape[0]
-            if step > 0:
-                n_samples *= validate_every
-            latest_row['n_samples'] = n_samples        
+            latest_row['n_samples'] = int(samples_seen)
             
             # check for updates
             if os.path.exists(cfg['progress_file']):
@@ -307,7 +302,7 @@ def run_training(cfg):
                 eval_df = pd.concat([eval_df, latest_row])
             
             eval_df.to_csv(progress_file, index=False)
-        
+            samples_seen = 0
             # build print dict and call the printer
             print_metrics = {"value_mse": value_mse, "value_corr": value_corr}
             print_metrics.update(policy_stats)
@@ -371,7 +366,7 @@ def run_training(cfg):
             
                 plt.tight_layout()
                 # save eval progress plot
-                ep_path = os.path.join(run_dir, "eval_progess.png")
+                ep_path = os.path.join(run_dir, "eval_progress.png")
                 fig.tight_layout()
                 fig.savefig(ep_path)
                 plt.close(fig)
@@ -419,6 +414,7 @@ def run_training(cfg):
         print()
 
     # when done
+    lc0_parser.shutdown()
     print(f"[training] Training Complete {elapsed()}")
     model.save(cfg['model_path'])
 
