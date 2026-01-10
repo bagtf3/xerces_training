@@ -177,58 +177,29 @@ class ChunkParser:
 
 class ChunkParserInner:
     def __init__(self, parent, chunks, shuffle_size,
-                 sample, batch_size, diff_focus_min,
-                 diff_focus_slope, diff_focus_q_weight, diff_focus_pol_scale,
-                 workers):
-        """
-        Read data and yield batches of raw tensors.
-
-        'parent' the outer chunk parser to store processes. Must not be stored by self directly or indirectly.
-        'chunks' list of chunk filenames.
-        'shuffle_size' is the size of the shuffle buffer.
-        'sample' is the rate to down-sample.
-        'diff_focus_min', 'diff_focus_slope', 'diff_focus_q_weight' and 'diff_focus_pol_scale' control diff focus
-        'workers' is the number of child workers to use.
-
-        The data is represented in a number of formats through this dataflow
-        pipeline. In order, they are:
-
-        chunk: The name of a file containing chunkdata
-
-        chunkdata: type Bytes. Multiple records of v6 format where each record
-        consists of (state, policy, result, q)
-
-        raw: A byte string holding raw tensors contenated together. This is
-        used to pass data from the workers to the parent. Exists because
-        TensorFlow doesn't have a fast way to unpack bit vectors. 7950 bytes
-        long.
-        """
-
-        # Build 2 flat float32 planes with values 0,1
+                sample, batch_size, diff_focus_min,
+                diff_focus_slope, diff_focus_q_weight, diff_focus_pol_scale,
+                workers):
+        
+        # build constant planes
         self.flat_planes = []
         for i in range(2):
             self.flat_planes.append(
                 (np.zeros(64, dtype=np.float32) + i).tobytes())
 
-        # set the down-sampling rate
         self.sample = sample
-        # set the details for diff focus, defaults accept all positions
         self.diff_focus_min = diff_focus_min
         self.diff_focus_slope = diff_focus_slope
         self.diff_focus_q_weight = diff_focus_q_weight
         self.diff_focus_pol_scale = diff_focus_pol_scale
-        # set the mini-batch size
         self.batch_size = batch_size
-        # set number of elements in the shuffle buffer.
         self.shuffle_size = shuffle_size
-        # Start worker processes, leave 2 for TensorFlow
+
         if workers is None:
             workers = max(1, mp.cpu_count() - 2)
 
         if workers > 0:
             print("Using {} worker processes.".format(workers))
-
-            # Start the child workers running
             self.readers = []
             self.writers = []
             parent.processes = []
@@ -236,19 +207,21 @@ class ChunkParserInner:
             for _ in range(workers):
                 read, write = mp.Pipe(duplex=False)
                 p = mp.Process(target=self.task,
-                               args=(self.chunk_filename_queue, write))
+                            args=(self.chunk_filename_queue, write))
                 p.daemon = True
                 parent.processes.append(p)
                 p.start()
                 self.readers.append(read)
                 self.writers.append(write)
 
-            parent.chunk_process = mp.Process(target=chunk_reader,
-                                              args=(chunks,
-                                                    self.chunk_filename_queue))
+            parent.chunk_process = mp.Process(
+                target=chunk_reader, args=(chunks, self.chunk_filename_queue)
+            )
+
             parent.chunk_process.daemon = True
             parent.chunk_process.start()
         else:
+            # single-process mode
             self.chunks = chunks
 
         self.init_structs()
@@ -259,7 +232,6 @@ class ChunkParserInner:
         self.sample_time = 0.0
         self.batches_yielded = 0
         self.records_yielded = 0
-        self.files_read = 0
         self.raw_records_seen = 0
 
     def init_structs(self):
@@ -512,8 +484,7 @@ class ChunkParserInner:
                 elif version == V3_VERSION:
                     record_size = self.v3_struct.size
                 else:
-                    print("Unknown version {} in file {}".format(version,
-                                                               filename))
+                    print("Unknown version {} in file {}".format(version, filename))
                     return
                 while True:
                     chunkdata = chunk_file.read(256 * record_size)
@@ -594,7 +565,6 @@ class ChunkParserInner:
         applying a random symmetry on the way.
         """
         for r in gen:
-            self.files_read += 1
             yield self.convert_v6_to_tuple(r)
 
     def batch_gen(self, gen, allow_partial=True):
@@ -637,7 +607,7 @@ class ChunkParserInner:
         total_sample = self.sample_time
         batches = self.batches_yielded
         records = self.records_yielded
-        files = self.files_read
+
         buf = self.shuffle_size
 
         def fmt_time(s):
@@ -653,7 +623,6 @@ class ChunkParserInner:
             ("sample time", f"{total_sample:.3f}s"),
             ("batches yielded", f"{batches:,}"),
             ("records yielded", f"{records:,}"),
-            ("files read (seq)", f"{files:,}"),
             ("shuffle_size", f"{buf:,}"),
         ]
 
@@ -661,6 +630,7 @@ class ChunkParserInner:
         max_val = max(len(r[1]) for r in rows)
         for k, v in rows:
             print(f"[chunk] {k.ljust(max_label)} : {v.rjust(max_val)}")
+
 
 
 # Tests to check that records parse correctly

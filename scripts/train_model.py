@@ -138,7 +138,15 @@ def run_training(cfg):
     print(f"[lc0] {'TOTAL'.ljust(max_name)} : "
         f"{f'{len(chunks):,}'.rjust(count_w)} files")
 
-    shuffle_size = min(batch_size*cfg['shuffle_size_bs_mult'], 20000)
+    parser = ChunkParser(chunks, workers=2, batch_size=64)
+    it = parser.parse()
+    for i, batch in enumerate(it):
+        if i >= 2:
+            break
+    parser.inner.report()
+    parser.shutdown()
+
+    shuffle_size = max(batch_size*cfg['shuffle_size_bs_mult'], 20000)
     lc0_mix = cfg.get("lc0_to_selfplay_mix", 1.0)
     if lc0_mix == 1.0:
         lc0_batch_size = int(major_batch_size)
@@ -157,7 +165,7 @@ def run_training(cfg):
         diff_focus_q_weight=cfg.get("diff_focus_q_weight", 3.0),
         diff_focus_pol_scale=cfg.get("diff_focus_pol_scale", 2.0),
     )
-    
+
     json_parser = None
     if cfg['use_selfplay_data']:
         # check to see if anything was set for Lc0
@@ -209,7 +217,7 @@ def run_training(cfg):
     validate_every = cfg.get('validate_every', 10)
     begin = time.time()
     
-    for step, lc0_batch in enumerate(lc0_parser.sequential()):
+    for step, lc0_batch in enumerate(lc0_parser.parse()):
         epoch_start = time.time()
         if step % 17 == 0:
             lc0_parser.report()
@@ -403,7 +411,7 @@ def run_training(cfg):
 
         if step % cfg.get("checkpoint_every", 50) == 0:
             print("[training] Checkpointing model")
-            model.save(cfg['model_file'])
+            model.save(cfg['model_path'])
         
         print("-"*100)
         print(f"[time check] last epoch: {e_time}, avg epoch: {avg_epoch},  "
@@ -411,8 +419,8 @@ def run_training(cfg):
         print()
 
     # when done
-    print(f"[training] Training Complete {elapsed}")
-    model.save(cfg['model_file'])
+    print(f"[training] Training Complete {elapsed()}")
+    model.save(cfg['model_path'])
 
     
 if __name__ == "__main__":
@@ -443,7 +451,7 @@ if __name__ == "__main__":
     cfg = load_training_config(yaml_path)
     cfg['run_dir'] = run_dir
     cfg['run_tag'] = run_tag
-    
+
     # check for the model
     model_file = run_tag + "_model.h5"
     model_path = os.path.join(run_dir, model_file)
