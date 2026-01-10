@@ -212,10 +212,11 @@ def run_training(cfg):
     loss_weights = {'policy_logits': 1.0, 'value_out': 1.0}
     print(f"[training] Starting training run {elapsed()}")
     validate_every = cfg.get('validate_every', 10)
-    begin = time.time()
     
+    # start overall time and first epoch timer
+    begin = time.time()
+    epoch_start = time.time()
     for step, lc0_batch in enumerate(lc0_parser.parse()):
-        epoch_start = time.time()
         if step % 17 == 0:
             lc0_parser.report()
             
@@ -416,6 +417,9 @@ def run_training(cfg):
             print(f"[time check] last epoch: {e_time}, avg epoch: {avg_epoch},  "
                 f"total runtime: {runtime}")
             print()
+            
+        # start timer for next epoch here to catch Chunkparser parsing
+        epoch_start = time.time()
 
     # when done
     lc0_parser.shutdown()
