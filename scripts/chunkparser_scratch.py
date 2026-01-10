@@ -17,7 +17,7 @@ import matplotlib.pyplot as plt
 #training-run1--20230505-0917
 #training-run1--20230415-1317
 #training-run1--20230505-0217
-chunk_dir = "C:/Users/Bryan/Data/chessbot_data/training_data/lc0/training-run1--20250209-1017"
+chunk_dir = "C:/Users/Bryan/Data/chessbot_data/training_data/lc0/training-run1--20230415-1317"
 all_files = [f for f in os.listdir(chunk_dir) if f.endswith(".gz")]
 random.shuffle(all_files)
 chunks = [os.path.join(chunk_dir, c) for c in all_files[:30]]
@@ -195,15 +195,14 @@ bad_illegal_mass_flag = False
 possible_ep_catch = 0
 chess_960_ignored = 0
 passing = 0
-for bi, batch in enumerate(parser.sequential()):    
+for bi, batch in enumerate(parser.sequential()):
     print("batch", bi)
     epoch = bi
     Xstack = batch[0]
     Mstack = batch[1]
     Pstack = batch[2]
     Ystack = batch[3]
-    #fens = batch[4]
-    #infos = batch[5]
+
     #%%
     for i, f in enumerate(fens):
         b = Board(f)

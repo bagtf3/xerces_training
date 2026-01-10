@@ -196,7 +196,10 @@ class ChunkParserInner:
         self.draw_drop_rate = draw_drop_rate
         self.batch_size = batch_size
         self.shuffle_size = shuffle_size
-
+        #self.visit_counter = []
+        #self.diff_q_counter = []
+        #self.pol_kld_counter = []
+        #self.thresh_counter = []
         if workers is None:
             workers = max(1, mp.cpu_count() - 2)
 
@@ -307,6 +310,33 @@ class ChunkParserInner:
          played_idx, best_idx, reserved1, reserved2, reserved3,
          reserved4) = self.v6_struct.unpack(content)
         
+        # if visits == visits:
+        #     self.visit_counter.append(visits)
+
+        # diff_q = abs(best_q - orig_q)
+        # if diff_q == diff_q:
+        #     self.diff_q_counter.append(diff_q)
+
+        # pol_kld = struct.unpack('f', content[8348:8352])[0]
+        # if pol_kld == pol_kld:
+        #     self.pol_kld_counter.append(pol_kld)
+        
+        # q_weight = 3.0
+        # pol_scale = 1.0
+        # total = (q_weight * diff_q + pol_kld) / (q_weight + pol_scale)
+        # thresh_p = min(1.0, 0.5 + 2.0 * total)
+        
+        # if thresh_p == thresh_p:
+        #     self.thresh_counter.append(thresh_p)
+            
+        # if len(self.visit_counter) % 50 == 0:
+        #     print(f"Average visits: {np.mean(self.visit_counter):.3f}")
+        #     print(f"Average diff_q: {np.mean(self.diff_q_counter):.3f}")
+        #     print(f"Average pol_kld: {np.mean(self.pol_kld_counter):.3f}")
+        #     print(f"Average thresh: {np.mean(self.thresh_counter):.3f}")
+        #     print()
+        
+
         """
         v5 struct format was (8308 bytes total)
             int32 version (4 bytes)
@@ -459,7 +489,8 @@ class ChunkParserInner:
                 record += 48 * b'\x00'
 
             if version == V6_VERSION:
-                # diff focus code, peek at best_q, orig_q and pol_kld from record (unpacks as tuple with one item)
+                # diff focus code, peek at best_q, orig_q and pol_kld from record
+                # (unpacks as tuple with one item)
                 best_q = struct.unpack('f', record[8284:8288])[0]
                 orig_q = struct.unpack('f', record[8328:8332])[0]
                 pol_kld = struct.unpack('f', record[8348:8352])[0]
