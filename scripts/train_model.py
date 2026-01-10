@@ -207,7 +207,8 @@ def run_training(cfg):
         eval_df = None
     else:
         eval_df = pd.read_csv(progress_file)
-
+    
+    # initializing weights
     loss_weights = {'policy_logits': 1.0, 'value_out': 1.0}
     print(f"[training] Starting training run {elapsed()}")
     validate_every = cfg.get('validate_every', 10)
@@ -254,7 +255,7 @@ def run_training(cfg):
             preds = model.predict(Xb, verbose=0, batch_size=batch_size)
             value_preds = preds[1].ravel(); targets = np.asarray(Yb).ravel()
             
-            # save true vs pred scatter to disk (don't show)
+            # save true vs pred scatter to disk
             tvp_path = os.path.join(run_dir, "true_vs_pred_plot_latest.png")
             fig = plt.figure(figsize=(6, 6))
             ax = fig.add_subplot(1, 1, 1)
@@ -405,13 +406,14 @@ def run_training(cfg):
         avg_epoch = format_time(np.mean(epoch_time_list))
 
         if step % cfg.get("checkpoint_every", 50) == 0:
-            print("[training] Checkpointing model")
+            print("[training] Checkpointing Model")
             model.save(cfg['model_path'])
         
-        print("-"*100)
-        print(f"[time check] last epoch: {e_time}, avg epoch: {avg_epoch},  "
-            f"total runtime: {runtime}")
-        print()
+        if step % 5 == 0:
+            print("-"*100)
+            print(f"[time check] last epoch: {e_time}, avg epoch: {avg_epoch},  "
+                f"total runtime: {runtime}")
+            print()
 
     # when done
     lc0_parser.shutdown()
