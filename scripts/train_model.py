@@ -395,21 +395,23 @@ def run_training(cfg):
         fmt = (f"{ETAG} [model fit] "
             f"{{name:<{name_w}}} : value: {{start:{num_w}.4f}} -> "
             f"{{end:{num_w}.4f}}  delta: {{delta:{num_w}.4f}} {{mark}}")
-
+    
         for name, start, end, delta, mark in rows:
             print(fmt.format(name=name, start=start, end=end, delta=delta, mark=mark))
-                    
-        epoch_time = time.time() - epoch_start
-        epoch_time_list.append(epoch_time)
-        e_time = format_time(epoch_time)
-        runtime = format_time(time.time() - begin)
-        avg_epoch = format_time(np.mean(epoch_time_list))
-
+        
         if step % cfg.get("checkpoint_every", 50) == 0:
             print("[training] Checkpointing Model")
             model.save(cfg['model_path'])
         
+        # log the timing
+        epoch_time = time.time() - epoch_start
+        epoch_time_list.append(epoch_time)
+        
         if step % 5 == 0:
+            e_time = format_time(epoch_time)
+            runtime = format_time(time.time() - begin)
+            avg_epoch = format_time(np.mean(epoch_time_list))
+            
             print("-"*100)
             print(f"[time check] last epoch: {e_time}, avg epoch: {avg_epoch},  "
                 f"total runtime: {runtime}")
