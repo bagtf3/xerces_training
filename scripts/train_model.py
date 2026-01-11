@@ -217,13 +217,11 @@ def run_training(cfg):
     begin = time.time()
     epoch_start = time.time()
 
-    # if a restart, where to start from, else 0
-    epoch = cfg.get("starting_epoch", 0)
     for step, lc0_batch in enumerate(lc0_parser.parse()):
         if step % 17 == 0:
             lc0_parser.report()
             
-        epoch += step*cfg['major_batch_mult']
+        epoch = step*cfg['major_batch_mult']
         if epoch > n_epochs:
             break
 
